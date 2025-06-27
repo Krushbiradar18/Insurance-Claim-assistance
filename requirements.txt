@@ -1,0 +1,7 @@
+streamlit
+PyPDF2
+pytesseract
+Pillow
+cohere
+python-dotenv
+fpdf
