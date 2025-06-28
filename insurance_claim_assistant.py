@@ -20,37 +20,40 @@ if "user_inputs" not in st.session_state:
 
 # --------------- Upload Section ---------------
 st.header("Upload Your Claim Document")
-uploaded_file = st.file_uploader("Upload a PDF or image", type=["pdf", "png", "jpg", "jpeg"])
+uploaded_files = st.file_uploader("Upload one or more claim documents", type=["pdf", "png", "jpg", "jpeg"], accept_multiple_files=True)
 extracted_text = ""
 doc_type_result = ""
+uploaded_image_types = [file for file in uploaded_files if file.type.startswith("image/")] if uploaded_files else []
 
-if uploaded_file:
-    if uploaded_file.type == "application/pdf":
-        try:
-            reader = PyPDF2.PdfReader(uploaded_file)
-            for page in reader.pages:
-                extracted_text += page.extract_text() or ""
-        except Exception as e:
-            st.error(f"PDF extraction failed: {e}")
-    else:
-        try:
-            image = Image.open(uploaded_file)
-            extracted_text = pytesseract.image_to_string(image)
-        except Exception as e:
-            st.error(f"OCR failed: {e}")
+if uploaded_files:
+    for file in uploaded_files:
+        if file.type == "application/pdf":
+            try:
+                reader = PyPDF2.PdfReader(file)
+                for page in reader.pages:
+                    extracted_text += page.extract_text() or ""
+            except Exception as e:
+                st.error(f"PDF extraction failed for {file.name}: {e}")
+        else:
+            try:
+                image = Image.open(file)
+                extracted_text += pytesseract.image_to_string(image)
+            except Exception as e:
+                st.error(f"OCR failed for {file.name}: {e}")
 
     if extracted_text:
-        st.success("✅ Text extracted from the document.")
-        st.text_area("🧾 Extracted Text", extracted_text, height=200)
-        with st.spinner("🔍 Classifying document type..."):
-            prompt = f"Classify the type of this document based on its content. Choose from: Hospital Bill, Discharge Summary, Doctor's Report, Police Report, Vehicle Image, Medical Report, Flight Ticket, Passport Copy, Lost Baggage Report.\n\nDocument Text:\n{extracted_text}"
+        st.success("✅ Text extracted from all uploaded documents.")
+        st.text_area("🧾 Combined Extracted Text", extracted_text, height=200)
+
+        # Auto-classify combined document types
+        with st.spinner("🔍 Classifying combined document content..."):
+            prompt = f"Classify the type(s) of this document content. Choose from: Hospital Bill, Discharge Summary, Doctor's Report, Police Report, Vehicle Image, Medical Report, Flight Ticket, Passport Copy, Lost Baggage Report.\n\nCombined Document Text:\n{extracted_text}"
             try:
                 response = co.generate(model="command", prompt=prompt, max_tokens=400)
                 doc_type_result = response.generations[0].text.strip()
-                st.info(f"🗂️ Detected Document Type: **{doc_type_result}**")
+                st.info(f"🗂️ Detected Document Type(s): **{doc_type_result}**")
             except Exception as e:
                 st.error(f"❌ Classification failed: {e}")
-
 # --------------- Claim Form Section ---------------
 st.header("📝 Claim Details")
 claim_type = st.selectbox("Select Claim Type", ["Health", "Accident", "Travel"])
@@ -60,6 +63,8 @@ st.session_state.user_inputs["claim_type"] = claim_type
 st.session_state.user_inputs["user_description"] = user_description
 st.session_state.user_inputs["extracted_text"] = extracted_text
 
+# Track if any image file is uploaded
+# --------------- Claim Form Section ---------------
 if claim_type:
     required_docs = {
         "Health": ["Hospital Bill", "Discharge Summary", "Doctor's Report"],
@@ -68,13 +73,26 @@ if claim_type:
     }
     checklist = required_docs[claim_type]
     st.markdown("#### 📌 Required Documents:")
-    if doc_type_result:
-        missing_docs = [doc for doc in checklist if doc.lower() not in doc_type_result.lower()]
-        if missing_docs:
-            st.warning("⚠️ Missing document(s): " + ", ".join(missing_docs))
-        else:
-            st.success("✅ All required documents appear to be present.")
 
+    # Normalize extracted text types
+    normalized_result = doc_type_result.lower() if doc_type_result else ""
+    missing_docs = []
+
+    for doc in checklist:
+        doc_lower = doc.lower()
+        if (
+            doc_lower == "vehicle images"
+            and claim_type == "Accident"
+            and uploaded_image_types  # ⬅️ if any image is uploaded, we assume vehicle images exist
+        ):
+            continue
+        if doc_lower not in normalized_result:
+            missing_docs.append(doc)
+
+    if missing_docs:
+        st.warning("⚠️ Missing document(s): " + ", ".join(missing_docs))
+    else:
+        st.success("✅ All required documents appear to be present.")
 # --------------- Guided Claim Writer ---------------
 with st.expander("🧠 Need help writing the incident description?"):
     claim_type = st.session_state.get("claim_type", "Health")
